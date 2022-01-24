@@ -6,6 +6,7 @@
 
 #include <linux/bitfield.h>
 #include <linux/init.h>
+#include <linux/mfd/syscon.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
@@ -22,7 +23,8 @@
 #define to_reset_data(x)	container_of(x, struct intel_reset_data, rcdev)
 
 struct intel_reset_soc {
-	bool legacy;
+	bool syscon;
+	bool shifted_stat_reg;
 	u32 reset_cell_count;
 };
 
@@ -54,12 +56,12 @@ static u32 id_to_reg_and_bit_offsets(struct intel_reset_data *data,
 	*rst_req = FIELD_GET(REG_OFFSET_MASK, id);
 	*req_bit = FIELD_GET(BIT_OFFSET_MASK, id);
 
-	if (data->soc_data->legacy)
+	if (data->soc_data->reset_cell_count == 3)
 		*stat_bit = FIELD_GET(STAT_BIT_OFFSET_MASK, id);
 	else
 		*stat_bit = *req_bit;
 
-	if (data->soc_data->legacy && *rst_req == RCU_RST_REQ)
+	if (data->soc_data->shifted_stat_reg && *rst_req == RCU_RST_REQ)
 		return RCU_RST_STAT;
 	else
 		return *rst_req + 0x4;
@@ -144,7 +146,7 @@ static int intel_reset_xlate(struct reset_controller_dev *rcdev,
 	id = FIELD_PREP(REG_OFFSET_MASK, spec->args[0]);
 	id |= FIELD_PREP(BIT_OFFSET_MASK, spec->args[1]);
 
-	if (data->soc_data->legacy) {
+	if (data->soc_data->reset_cell_count == 3) {
 		if (spec->args[2] > 31)
 			return -EINVAL;
 
@@ -182,12 +184,17 @@ static int intel_reset_probe(struct platform_device *pdev)
 	if (!data->soc_data)
 		return -ENODEV;
 
-	base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(base))
-		return PTR_ERR(base);
+	if (data->soc_data->syscon) {
+		data->regmap = syscon_node_to_regmap(np);
+	} else {
+		base = devm_platform_ioremap_resource(pdev, 0);
+		if (IS_ERR(base))
+			return PTR_ERR(base);
 
-	data->regmap = devm_regmap_init_mmio(dev, base,
-					     &intel_rcu_regmap_config);
+		data->regmap = devm_regmap_init_mmio(dev, base,
+						&intel_rcu_regmap_config);
+	}
+
 	if (IS_ERR(data->regmap)) {
 		dev_err(dev, "regmap initialization failed\n");
 		return PTR_ERR(data->regmap);
@@ -213,7 +220,7 @@ static int intel_reset_probe(struct platform_device *pdev)
 	data->reboot_id = FIELD_PREP(REG_OFFSET_MASK, rb_id[0]);
 	data->reboot_id |= FIELD_PREP(BIT_OFFSET_MASK, rb_id[1]);
 
-	if (data->soc_data->legacy)
+	if (data->soc_data->reset_cell_count == 3)
 		data->reboot_id |= FIELD_PREP(STAT_BIT_OFFSET_MASK, rb_id[2]);
 
 	data->restart_nb.notifier_call =	intel_reset_restart_handler;
@@ -224,18 +231,27 @@ static int intel_reset_probe(struct platform_device *pdev)
 }
 
 static const struct intel_reset_soc xrx200_data = {
-	.legacy =		true,
+	.syscon =		true,
+	.shifted_stat_reg =	true,
 	.reset_cell_count =	3,
 };
 
+static const struct intel_reset_soc xrx500_data = {
+	.syscon =		true,
+	.shifted_stat_reg =	true,
+	.reset_cell_count =	2,
+};
+
 static const struct intel_reset_soc lgm_data = {
-	.legacy =		false,
+	.syscon =		false,
+	.shifted_stat_reg =	false,
 	.reset_cell_count =	2,
 };
 
 static const struct of_device_id intel_reset_match[] = {
 	{ .compatible = "intel,rcu-lgm", .data = &lgm_data },
 	{ .compatible = "intel,rcu-xrx200", .data = &xrx200_data },
+	{ .compatible = "intel,rcu-xrx500", .data = &xrx500_data },
 	{}
 };
 
