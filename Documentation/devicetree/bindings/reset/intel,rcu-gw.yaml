@@ -14,6 +14,7 @@ properties:
     enum:
       - intel,rcu-lgm
       - intel,rcu-xrx200
+      - intel,rcu-xrx500
 
   reg:
     description: Reset controller registers.
@@ -35,7 +36,7 @@ properties:
       First cell is reset request register offset.
       Second cell is bit offset in reset request register.
       Third cell is bit offset in reset status register.
-      For LGM SoC, reset cell count is 2 as bit offset in
+      For LGM and XRX500 SoCs, reset cell count is 2 as bit offset in
       reset request and reset status registers is same. Whereas
       3 for legacy SoCs as bit offset differs.
 
